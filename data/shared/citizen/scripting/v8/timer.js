@@ -1,139 +1,183 @@
 // Timers
 
-(function (global) {
-    let gameTime = Citizen.getTickCount();
+(function(global) {
+  const haltTicker = Symbol('haltTicker');
+  const noopTicker = () => {};
 
-    const timers = {};
-    let timerId = 0;
-    const tickers = [];
-    let animationFrames = [];
+  let gameTime = Citizen.getTickCount();
 
-    function  setTimer(timer, callback, interval) {
-        timers[timer.id] = {
-            callback,
-            interval,
-            lastRun: gameTime
-        };
-    }
+  const timers = {};
+  let timerId = 0;
+  const tickers = [];
+  let animationFrames = [];
 
-    function nextId() {
-        return { id: timerId++, unref() {}, ref() {} };
-    }
+  function setTimer(timer, callback, interval) {
+    timers[timer.id] = {
+      callback,
+      interval,
+      lastRun: gameTime
+    };
+  }
 
-    function setTick(callback) {
-        tickers[tickers.length] = callback;
-    }
+  function nextId() {
+    return {
+      id: timerId++,
+      unref() {},
+      ref() {}
+    };
+  }
 
-    function clearTimer(timer) {
-        if (!timer) { return; }
-    
-        delete timers[timer.id];
-    }
+  function setTick(callback) {
+    tickers[tickers.length] = callback;
+  }
 
-    function setTick(callback) {
-        tickers[tickers.length] = callback;
-    }
+  function clearTimer(timer) {
+    if (!timer) { return; }
 
-    function requestAnimationFrame(callback) {
-        animationFrames[animationFrames.length] = callback;
-    }
+    delete timers[timer.id];
+  }
 
-    function setInterval(callback, interval) {
-        const id = nextId();
+  function setTick(callback) {
+    tickers[tickers.length] = callback;
+  }
 
-        setTimer(id, callback, interval);
+  function requestAnimationFrame(callback) {
+    animationFrames[animationFrames.length] = callback;
+  }
 
-        return id;
-    }
+  function setInterval(callback, interval) {
+    const id = nextId();
 
-    function setTimeout(callback, timeout, ...argsForCallback) {
-        const id = nextId();
+    setTimer(id, callback, interval);
 
-        setTimer(
-            id,
-            function() {
-				try {
-					callback(...argsForCallback);
-				} finally {
-					clearTimer(id);
-				}
-            },
-            timeout
-        );
+    return id;
+  }
 
-        return id;
-    }
+  function setTimeout(callback, timeout, ...argsForCallback) {
+    const id = nextId();
 
-    function setImmediate(callback, ...argsForCallback) {
-        return setTimeout(callback, 0, ...argsForCallback);
-    }
+    setTimer(
+      id,
+      function() {
+        try {
+          callback(...argsForCallback);
+        } finally {
+          clearTimer(id);
+        }
+      },
+      timeout
+    );
 
-    function onTick() {
-        const localGameTime = Citizen.getTickCount(); // ms
-        let i;
+    return id;
+  }
 
-        for (const id in timers) {
-            const timer = timers[id];
+  function setImmediate(callback, ...argsForCallback) {
+    return setTimeout(callback, 0, ...argsForCallback);
+  }
 
-            if ((localGameTime - timer.lastRun) > timer.interval) {
-                try {
-                    timer.callback();
-                } catch(e) {
-                    console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
-                }
+  function onTick() {
+    const localGameTime = Citizen.getTickCount(); // ms
+    let i;
 
-                timer.lastRun = localGameTime;
-            }
+    // Process timers
+    for (const id in timers) {
+      const timer = timers[id];
+
+      if ((localGameTime - timer.lastRun) > timer.interval) {
+        try {
+          timer.callback();
+        } catch (e) {
+          console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
         }
 
-        // Process tickers
-        if (tickers.length > 0) {
-            i = tickers.length;
-
-            while (i--) {
-                try {
-                    tickers[i]();
-                } catch(e) {
-                    console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
-                }
-            }
-        }
-
-        // Process animation frames
-        if (animationFrames.length !== 0) {
-            const currentAnimationFrames = animationFrames;
-            animationFrames = [];
-
-            i = currentAnimationFrames.length;
-
-            while (i--) {
-                try {
-                    currentAnimationFrames[i]();
-                } catch(e) {
-                    console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
-                }
-            }
-        }
-
-        gameTime = localGameTime;
-				
-        //Manually fire the callbacks that were enqueued by process.nextTick.
-        //Since we override setImmediate/etc, this doesn't happen automatically.
-        if (global.process && typeof global.process._tickCallback === "function")
-          global.process._tickCallback();
+        timer.lastRun = localGameTime;
+      }
     }
 
-    global.setTimeout = setTimeout;
-	global.clearTimeout = clearTimer;
+    // Process tickers
+    if (tickers.length > 0) {
+      i = tickers.length;
 
-	global.setInterval = setInterval;
-	global.clearInterval = clearTimer;
+      while (i--) {
+        const ticker = tickers[i];
 
-	global.setImmediate = setImmediate;
-	global.clearImmediate = clearTimer;
+        if (ticker === noopTicker) {
+          continue;
+        }
 
-    global.setTick = setTick;
-    global.requestAnimationFrame = requestAnimationFrame;
-    
-    global.Citizen.setTickFunction(onTick);
+        try {
+          if (ticker() === haltTicker) {
+            tickers[i] = noopTicker;
+          }
+        } catch (e) {
+          console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
+        }
+      }
+    }
+
+    // Process animation frames
+    if (animationFrames.length !== 0) {
+      const currentAnimationFrames = animationFrames;
+      animationFrames = [];
+
+      i = currentAnimationFrames.length;
+
+      while (i--) {
+        try {
+          currentAnimationFrames[i]();
+        } catch (e) {
+          console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
+        }
+      }
+    }
+
+    gameTime = localGameTime;
+
+    // Manually fire callbacks that were enqueued by process.nextTick.
+    // Since we override setImmediate/etc, this doesn't happen automatically.
+    if (global.process && typeof global.process._tickCallback === "function") {
+      global.process._tickCallback();
+    }
+  }
+
+  global.setTimeout = setTimeout;
+  global.clearTimeout = clearTimer;
+
+  global.setInterval = setInterval;
+  global.clearInterval = clearTimer;
+
+  global.setImmediate = setImmediate;
+  global.clearImmediate = clearTimer;
+
+  global.setTick = setTick;
+  global.requestAnimationFrame = requestAnimationFrame;
+
+  global.haltTicker = haltTicker;
+
+  const defineGlobals = (globals) => {
+    Object.defineProperties(global, Object.keys(globals).reduce((acc, name) => {
+      acc[name] = {
+        value: globals[name],
+        writable: false,
+        enumerable: true,
+        configurable: false,
+      };
+
+      return acc;
+    }), {});
+  };
+
+  defineGlobals({
+    setTick,
+    haltTicker,
+    setTimeout,
+    clearTimeout,
+    setInterval,
+    clearInterval,
+    setImmediate,
+    clearImmediate,
+    requestAnimationFrame,
+  });
+
+  global.Citizen.setTickFunction(onTick);
 })(this || window);
