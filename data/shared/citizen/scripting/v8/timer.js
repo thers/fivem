@@ -1,6 +1,9 @@
 // Timers
 
-(function (global) {
+(function(global) {
+    const haltTicker = Symbol('haltTicker');
+    const noopTicker = () => {};
+
     let gameTime = Citizen.getTickCount();
 
     const timers = {};
@@ -8,7 +11,7 @@
     const tickers = [];
     let animationFrames = [];
 
-    function  setTimer(timer, callback, interval) {
+    function setTimer(timer, callback, interval) {
         timers[timer.id] = {
             callback,
             interval,
@@ -17,7 +20,11 @@
     }
 
     function nextId() {
-        return { id: timerId++, unref() {}, ref() {} };
+        return {
+            id: timerId++,
+            unref() {},
+            ref() {}
+        };
     }
 
     function setTick(callback) {
@@ -26,7 +33,7 @@
 
     function clearTimer(timer) {
         if (!timer) { return; }
-    
+
         delete timers[timer.id];
     }
 
@@ -52,11 +59,11 @@
         setTimer(
             id,
             function() {
-				try {
-					callback(...argsForCallback);
-				} finally {
-					clearTimer(id);
-				}
+                try {
+                    callback(...argsForCallback);
+                } finally {
+                    clearTimer(id);
+                }
             },
             timeout
         );
@@ -72,13 +79,14 @@
         const localGameTime = Citizen.getTickCount(); // ms
         let i;
 
+        // Process timers
         for (const id in timers) {
             const timer = timers[id];
 
             if ((localGameTime - timer.lastRun) > timer.interval) {
                 try {
                     timer.callback();
-                } catch(e) {
+                } catch (e) {
                     console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
                 }
 
@@ -91,9 +99,17 @@
             i = tickers.length;
 
             while (i--) {
+                const ticker = tickers[i];
+
+                if (ticker === noopTicker) {
+                    continue;
+                }
+
                 try {
-                    tickers[i]();
-                } catch(e) {
+                    if (ticker() === haltTicker) {
+                        tickers[i] = noopTicker;
+                    }
+                } catch (e) {
                     console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
                 }
             }
@@ -109,31 +125,45 @@
             while (i--) {
                 try {
                     currentAnimationFrames[i]();
-                } catch(e) {
+                } catch (e) {
                     console.error('Unhandled error: ' + e.toString() + '\n' + e.stack);
                 }
             }
         }
 
         gameTime = localGameTime;
-				
-        //Manually fire the callbacks that were enqueued by process.nextTick.
-        //Since we override setImmediate/etc, this doesn't happen automatically.
-        if (global.process && typeof global.process._tickCallback === "function")
-          global.process._tickCallback();
+
+        // Manually fire callbacks that were enqueued by process.nextTick.
+        // Since we override setImmediate/etc, this doesn't happen automatically.
+        if (global.process && typeof global.process._tickCallback === "function") {
+            global.process._tickCallback();
+        }
     }
 
-    global.setTimeout = setTimeout;
-	global.clearTimeout = clearTimer;
+    const defineGlobals = (globals) => {
+        Object.defineProperties(global, Object.keys(globals).reduce((acc, name) => {
+            acc[name] = {
+                value: globals[name],
+                writable: false,
+                enumerable: true,
+                configurable: false,
+            };
 
-	global.setInterval = setInterval;
-	global.clearInterval = clearTimer;
+            return acc;
+        }), {});
+    };
 
-	global.setImmediate = setImmediate;
-	global.clearImmediate = clearTimer;
+    defineGlobals({
+        setTick,
+        haltTicker,
+        setTimeout,
+        clearTimeout,
+        setInterval,
+        clearInterval,
+        setImmediate,
+        clearImmediate,
+        requestAnimationFrame,
+    });
 
-    global.setTick = setTick;
-    global.requestAnimationFrame = requestAnimationFrame;
-    
     global.Citizen.setTickFunction(onTick);
 })(this || window);
